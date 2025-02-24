@@ -265,10 +265,10 @@ def main_workflow():
     """
     console.print("[bold cyan]Добро пожаловать в систему анализа артефактов IT-проекта![/bold cyan]", justify="center")
     console.print("[bold green]Пожалуйста, введите описание проекта, включающее требования, user story, код и тестовые сценарии:[/bold green]")
-    with open('/Users/kpaq/Documents/code/products-ai-agent/test_er1_in_balance_text.txt', 'r') as file:
+    with open('/Users/kpaq/Documents/code/products-ai-agent/test_er3_in_border_ages_text.txt', 'r') as file:
         project_description = file.read()
         
-    with open('/Users/kpaq/Documents/code/products-ai-agent/test_er1_in_balance_code.txt', 'r') as file:
+    with open('/Users/kpaq/Documents/code/products-ai-agent/test_er3_in_border_ages_code2.txt', 'r') as file:
         project_code = file.read()
 
     # project_description = console.input(">> ")

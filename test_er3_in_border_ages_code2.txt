@@ -1,0 +1,103 @@
+```go
+// ------------------------- Go (Gin) -------------------------
+package main
+ 
+import (
+   "net/http"
+   "regexp"
+   "github.com/gin-gonic/gin"
+)
+ 
+type CreditRequest struct {
+   Age             int     `json:"age"`
+   CreditScore     int     `json:"credit_score"`
+   MonthlyIncome   float64 `json:"monthly_income"`
+   CurrentDebt     float64 `json:"current_debt"`
+   EmploymentMonths int    `json:"employment_months"`
+   RequestedAmount float64 `json:"requested_amount"`
+   LoanTerm        int     `json:"loan_term"`
+   HasCollateral   bool    `json:"has_collateral"`
+   PassportNumber  string  `json:"passport_number"`
+}
+ 
+func validatePassport(passport string) bool {
+   matched, _ := regexp.MatchString(`^\d{4} \d{6}$`, passport)
+   return matched
+}
+ 
+func checkCredit(c *gin.Context) {
+   var req CreditRequest
+   if err := c.BindJSON(&req); err != nil {
+       c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный формат запроса"})
+       return
+   }
+ 
+   // Валидация паспорта
+   if !validatePassport(req.PassportNumber) {
+       c.JSON(http.StatusBadRequest, gin.H{"approved": false, "reason": "Неверный формат паспорта"})
+       return
+   }
+ 
+   // Базовые проверки
+   if req.Age < 17 || req.Age > 65 {
+       c.JSON(http.StatusOK, gin.H{"approved": false, "reason": "Возраст не соответствует требованиям"})
+       return
+   }
+ 
+   if req.CreditScore < 450 {
+       c.JSON(http.StatusOK, gin.H{"approved": false, "reason": "Низкий кредитный рейтинг"})
+       return
+   }
+ 
+   if req.EmploymentMonths < 6 {
+       c.JSON(http.StatusOK, gin.H{"approved": false, "reason": "Недостаточный стаж работы"})
+       return
+   }
+ 
+   // Расчет потенциала
+   availableIncome := req.MonthlyIncome * 0.4
+   monthlyPayment := availableIncome - (req.CurrentDebt / 12)
+   
+   if monthlyPayment <= 0 {
+       c.JSON(http.StatusOK, gin.H{"approved": false, "reason": "Недостаточный доход"})
+       return
+   }
+ 
+   creditPotential := monthlyPayment * float64(req.LoanTerm)
+ 
+   if creditPotential < req.RequestedAmount {
+       c.JSON(http.StatusOK, gin.H{"approved": false, "reason": "Недостаточный кредитный потенциал"})
+       return
+   }
+ 
+   // Расчет ставки
+   rate := 12.0
+   if req.CreditScore >= 450 && req.CreditScore < 600 {
+       rate += 2
+   }
+   if req.HasCollateral {
+       rate -= 1
+   }
+   if req.LoanTerm > 36 {
+       rate += 3
+   }
+ 
+   // Проверка максимальной суммы
+   approvedAmount := creditPotential
+   if approvedAmount > 5_000_000 {
+       approvedAmount = 5_000_000
+   }
+ 
+   c.JSON(http.StatusOK, gin.H{
+       "approved":        true,
+       "credit_potential": creditPotential,
+       "approved_amount": approvedAmount,
+       "interest_rate":   rate,
+   })
+}
+ 
+func main() {
+   router := gin.Default()
+   router.POST("/check_credit", checkCredit)
+   router.Run(":8080")
+}

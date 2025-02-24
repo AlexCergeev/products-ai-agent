@@ -1,0 +1,177 @@
+Код_КредитныйПотенциал.txt`
+ 
+```python
+# ------------------------- Python (FastAPI) -------------------------
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Optional
+import re
+ 
+app = FastAPI()
+ 
+class CreditRequest(BaseModel):
+   age: int
+   credit_score: int
+   monthly_income: float
+   current_debt: float
+   employment_months: int
+   requested_amount: float
+   loan_term: int
+   has_collateral: Optional[bool] = False
+   passport_number: str  # Пример: "1234 567890"
+ 
+def validate_passport(passport: str) -> bool:
+   return re.match(r"^\d{4} \d{6}$", passport) is not None
+ 
+@app.post("/check_credit")
+def check_credit(request: CreditRequest):
+   try:
+       # Валидация базовых данных
+       if not validate_passport(request.passport_number):
+           raise HTTPException(status_code=400, detail="Неверный формат паспорта")
+ 
+       if request.age < 13 or request.age > 65:
+           return {"approved": False, "reason": "Возраст не соответствует требованиям"}
+ 
+       if request.credit_score < 450:
+           return {"approved": False, "reason": "Низкий кредитный рейтинг"}
+ 
+       if request.employment_months < 6:
+           return {"approved": False, "reason": "Недостаточный стаж работы"}
+ 
+       # Расчет потенциала
+       available_income = request.monthly_income * 0.4
+       monthly_payment = (available_income - (request.current_debt / 12))
+       
+       if monthly_payment <= 0:
+           return {"approved": False, "reason": "Недостаточный доход"}
+ 
+       credit_potential = monthly_payment * request.loan_term
+ 
+       # Проверка одобрения
+       if credit_potential < request.requested_amount:
+           return {"approved": False, "reason": "Недостаточный кредитный потенциал"}
+ 
+       # Расчет ставки
+       rate = 12.0
+       if 450 <= request.credit_score < 600:
+           rate += 2
+       if request.has_collateral:
+           rate -= 1
+       if request.loan_term > 36:
+           rate += 3
+ 
+       return {
+           "approved": True,
+           "credit_potential": round(credit_potential, 2),
+           "approved_amount": min(credit_potential, 5_000_000),
+           "interest_rate": round(rate, 1)
+       }
+ 
+   except Exception as e:
+       raise HTTPException(status_code=500, detail=str(e))
+```
+ 
+```go
+// ------------------------- Go (Gin) -------------------------
+package main
+ 
+import (
+   "net/http"
+   "regexp"
+   "github.com/gin-gonic/gin"
+)
+ 
+type CreditRequest struct {
+   Age             int     `json:"age"`
+   CreditScore     int     `json:"credit_score"`
+   MonthlyIncome   float64 `json:"monthly_income"`
+   CurrentDebt     float64 `json:"current_debt"`
+   EmploymentMonths int    `json:"employment_months"`
+   RequestedAmount float64 `json:"requested_amount"`
+   LoanTerm        int     `json:"loan_term"`
+   HasCollateral   bool    `json:"has_collateral"`
+   PassportNumber  string  `json:"passport_number"`
+}
+ 
+func validatePassport(passport string) bool {
+   matched, _ := regexp.MatchString(`^\d{4} \d{6}$`, passport)
+   return matched
+}
+ 
+func checkCredit(c *gin.Context) {
+   var req CreditRequest
+   if err := c.BindJSON(&req); err != nil {
+       c.JSON(http.StatusBadRequest, gin.H{"error": "Неверный формат запроса"})
+       return
+   }
+ 
+   // Валидация паспорта
+   if !validatePassport(req.PassportNumber) {
+       c.JSON(http.StatusBadRequest, gin.H{"approved": false, "reason": "Неверный формат паспорта"})
+       return
+   }
+ 
+   // Базовые проверки
+   if req.Age < 17 || req.Age > 65 {
+       c.JSON(http.StatusOK, gin.H{"approved": false, "reason": "Возраст не соответствует требованиям"})
+       return
+   }
+ 
+   if req.CreditScore < 450 {
+       c.JSON(http.StatusOK, gin.H{"approved": false, "reason": "Низкий кредитный рейтинг"})
+       return
+   }
+ 
+   if req.EmploymentMonths < 6 {
+       c.JSON(http.StatusOK, gin.H{"approved": false, "reason": "Недостаточный стаж работы"})
+       return
+   }
+ 
+   // Расчет потенциала
+   availableIncome := req.MonthlyIncome * 0.4
+   monthlyPayment := availableIncome - (req.CurrentDebt / 12)
+   
+   if monthlyPayment <= 0 {
+       c.JSON(http.StatusOK, gin.H{"approved": false, "reason": "Недостаточный доход"})
+       return
+   }
+ 
+   creditPotential := monthlyPayment * float64(req.LoanTerm)
+ 
+   if creditPotential < req.RequestedAmount {
+       c.JSON(http.StatusOK, gin.H{"approved": false, "reason": "Недостаточный кредитный потенциал"})
+       return
+   }
+ 
+   // Расчет ставки
+   rate := 12.0
+   if req.CreditScore >= 450 && req.CreditScore < 600 {
+       rate += 2
+   }
+   if req.HasCollateral {
+       rate -= 1
+   }
+   if req.LoanTerm > 36 {
+       rate += 3
+   }
+ 
+   // Проверка максимальной суммы
+   approvedAmount := creditPotential
+   if approvedAmount > 5_000_000 {
+       approvedAmount = 5_000_000
+   }
+ 
+   c.JSON(http.StatusOK, gin.H{
+       "approved":        true,
+       "credit_potential": creditPotential,
+       "approved_amount": approvedAmount,
+       "interest_rate":   rate,
+   })
+}
+ 
+func main() {
+   router := gin.Default()
+   router.POST("/check_credit", checkCredit)
+   router.Run(":8080")
+}
