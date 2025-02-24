@@ -1,0 +1,156 @@
+Проверь соответствие кода одобрения и требований. Проверь математическую корректность. 
+Требования:
+Общие требования
+Система должна:
+    •	Поддерживать обработку заявок клиентов в режиме реального времени.
+    •	Обеспечивать хранение данных о заявках и их статусах.
+    •	Учитывать кредитную историю клиентов.
+    •	Позволять в дальнейшем интеграцию с ML-моделью для прогнозирования кредитного риска.
+    •	Логировать все решения для дальнейшего анализа.
+Функциональные требования
+    1.	Регистрация клиента
+    •	Возможность добавления нового клиента с параметрами:
+    •	Имя
+    •	Возраст
+    •	Доход
+    •	Кредитный рейтинг
+    •	Количество активных кредитов
+    2.	Регистрация заявки
+    •	Возможность подачи заявки на кредит с параметрами:
+    •	Клиент (ID)
+    •	Запрашиваемая сумма
+    •	Срок кредита (в месяцах)
+    3.	Принятие решения
+    •	Заявка автоматически проходит проверку по следующим критериям:
+    •	Возраст клиента должен быть в диапазоне 21–65 лет.
+    •	Доход должен быть не ниже 20 000.
+    •	Кредитный рейтинг должен быть не ниже 600.
+    •	Количество активных кредитов не должно превышать 3.
+    •	Запрашиваемая сумма не должна превышать 5-кратный размер дохода.
+    •	Если хотя бы одно условие нарушено – заявка отклоняется.
+    4.	Логирование решений
+    •	Вся информация о решении по заявке записывается в базу:
+    •	ID заявки
+    •	Одобрение (Да/Нет)
+    •	Причина отказа (если отказ)
+    5.	Обновление статуса заявки
+    •	После вынесения решения заявка получает статус:
+    •	approved – если кредит одобрен
+    •	rejected – если кредит отклонен
+    6.	Отчетность
+    •	Возможность выгрузки всех заявок с их статусами для анализа.
+Код sql:
+CREATE TABLE customers (
+    customer_id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    age INT CHECK (age >= 18 AND age <= 100),
+    income DECIMAL(15,2) CHECK (income >= 0),
+    credit_score INT CHECK (credit_score >= 300 AND credit_score <= 850),
+    existing_loans INT CHECK (existing_loans >= 0),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE credit_applications (
+    application_id SERIAL PRIMARY KEY,
+    customer_id INT REFERENCES customers(customer_id) ON DELETE CASCADE,
+    amount DECIMAL(15,2) CHECK (amount > 0),
+    term_months INT CHECK (term_months > 0),
+    status VARCHAR(50) DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE credit_decisions (
+    decision_id SERIAL PRIMARY KEY,
+    application_id INT REFERENCES credit_applications(application_id) ON DELETE CASCADE,
+    approved BOOLEAN NOT NULL,
+    reason TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+SELECT 
+    c.customer_id, 
+    c.name, 
+    c.age, 
+    c.income, 
+    c.credit_score, 
+    c.existing_loans, 
+    a.application_id, 
+    a.amount, 
+    a.term_months, 
+    a.status 
+FROM credit_applications a
+JOIN customers c ON a.customer_id = c.customer_id
+WHERE a.status = 'pending';
+Код python:
+import psycopg2
+import pandas as pd
+Подключение к базе данных
+def get_db_connection():
+    return psycopg2.connect(
+        dbname="bank_db",
+        user="admin",
+        password="password",
+        host="localhost",
+        port="5432"
+    )
+Получение всех заявок, находящихся на рассмотрении
+def fetch_pending_applications():
+    conn = get_db_connection()
+    query = """
+        SELECT c.customer_id, c.age, c.income, c.credit_score, c.existing_loans, 
+               a.application_id, a.amount, a.term_months
+        FROM credit_applications a
+        JOIN customers c ON a.customer_id = c.customer_id
+        WHERE a.status = 'pending';
+    """
+    df = pd.read_sql(query, conn)
+    conn.close()
+    return df
+Функция принятия решения по кредиту
+def approve_credit(application):
+    age = application["age"]
+    income = application["income"]
+    credit_score = application["credit_score"]
+    existing_loans = application["existing_loans"]
+    amount = application["amount"]
+    term_months = application["term_months"]
+Условия одобрения
+
+if age < 21 or age > 65:
+    return True, "Недопустимый возраст"
+if income < 20000:
+    return False, "Низкий доход"
+if credit_score < 600:
+    return False, "Низкий кредитный рейтинг"
+if existing_loans >= 3:
+    return False, "Слишком много активных кредитов"
+if amount > income * 5:
+    return False, "Запрашиваемая сумма превышает допустимый лимит"
+return True, "Одобрено"
+Сохранение решения в базу данных
+def save_credit_decision(application_id, approved, reason):
+    conn = get_db_connection()
+    cur = conn.cursor()
+Запись решения
+
+cur.execute("""
+    INSERT INTO credit_decisions (application_id, approved, reason) 
+    VALUES (%s, %s, %s)
+""", (application_id, approved, reason))
+Обновление статуса заявки
+
+new_status = "approved" if approved else "rejected"
+cur.execute("""
+    UPDATE credit_applications 
+    SET status = %s 
+    WHERE application_id = %s
+""", (new_status, application_id))
+conn.commit()
+cur.close()
+conn.close()
+Основной процесс обработки заявок
+def process_credit_applications():
+    applications = fetch_pending_applications()
+for _, app in applications.iterrows():
+    approved, reason = approve_credit(app)
+    save_credit_decision(app["application_id"], approved, reason)
+    print(f"Заявка {app['application_id']}: {'Одобрена' if approved else 'Отклонена'} ({reason})")
+if name == "main":
+    process_credit_applications()

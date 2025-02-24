@@ -1,0 +1,194 @@
+Для реализации приложения для инвестирования на Python можно использовать библиотеки Flask и Django для создания веб-приложения, а также библиотеки для работы с базами данных, такими как SQLite, PostgreSQL или MySQL. Рассмотрим основные компоненты приложения:
+
+### 1. Модуль `auth` для регистрации и авторизации
+
+```python
+from flask import Flask, request, jsonify, abort
+from flask_sqlalchemy import SQLAlchemy
+import jwt
+from datetime import datetime, timedelta
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'your_secret_key'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
+db = SQLAlchemy(app)
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password = db.Column(db.String(120), nullable=False)
+    phone_number = db.Column(db.String(15))
+    is_verified = db.Column(db.Boolean, default=False)
+    investments = db.relationship('Investment', backref='user')
+
+    def hash_password(self, password):
+        self.password = bcrypt.generate_password_hash(password).decode('utf-8')
+
+    def verify_password(self, password):
+        return bcrypt.check_password_hash(self.password, password)
+
+    def generate_jwt(self):
+        payload = {
+            'username': self.username,
+            'exp': datetime.utcnow() + timedelta(minutes=30)
+        }
+        return jwt.encode(payload, app.config['SECRET_KEY'], algorithm='HS256')
+
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    if not data or not all([key in data for key in ['email', 'phone_number', 'password']]):
+        abort(400)
+    
+    email = data['email'].lower()
+    username = data['username'].lower()
+    phone_number = data['phone_number']
+    password = data['password']
+
+    existing_user = User.query.filter_by(email=email).first()
+    if existing_user:
+        abort(400, "User with this email already exists")
+
+    new_user = User(email=email, username=username, phone_number=phone_number)
+    new_user.hash_password(password)
+    db.session.add(new_user)
+    db.session.commit()
+
+    token = new_user.generate_jwt()
+    response = jsonify({'token': token.decode('UTF-8'), 'username': new_user.username})
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    if not data or not all([key in data for key in ['email', 'password']]):
+        abort(400)
+    
+    email = data['email'].lower()
+    password = data['password']
+
+    user = User.query.filter_by(email=email).first()
+    if not user or not user.verify_password(password):
+        abort(401)
+
+    token = user.generate_jwt()
+    response = jsonify({'token': token.decode('UTF-8'), 'username': user.username})
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
+```
+
+### 2. Модуль `accounts` для управления профилем
+
+```python
+from flask import Blueprint, request, jsonify, abort
+from werkzeug.security import check_password_hash
+from models import User
+
+bp = Blueprint('accounts', __name__)
+
+@bp.route('/profile', methods=['GET'])
+def get_profile():
+    current_user = request.headers.get('Authorization').split()[1]
+    user = User.query.filter_by(id=current_user).first()
+    if not user:
+        abort(404)
+    return jsonify({'username': user.username, 'email': user.email, 'phone_number': user.phone_number})
+
+@bp.route('/update_profile', methods=['PUT'])
+def update_profile():
+    current_user = request.headers.get('Authorization').split()[1]
+    user = User.query.filter_by(id=current_user).first()
+    if not user:
+        abort(404)
+
+    data = request.get_json()
+    if not data or not all([key in data for key in ['email', 'phone_number']]):
+        abort(400)
+
+    email = data.get('email', None)
+    phone_number = data.get('phone_number', None)
+
+    if email and User.query.filter_by(email=email).first():
+        abort(400, "Email already in use")
+
+    if phone_number and len(phone_number) > 15:
+        abort(400, "Phone number must be less than 16 characters")
+
+    if email:
+        user.email = email.lower()
+    if phone_number:
+        user.phone_number = phone_number
+
+    db.session.commit()
+    return jsonify({'message': 'Profile updated successfully'}), 200
+
+@bp.route('/change_password', methods=['PUT'])
+def change_password():
+    current_user = request.headers.get('Authorization').split()[1]
+    user = User.query.filter_by(id=current_user).first()
+    if not user:
+        abort(404)
+
+    data = request.get_json()
+    if not data or not all([key in data for key in ['old_password', 'new_password']]):
+        abort(400)
+
+    old_password = data['old_password']
+    new_password = data['new_password']
+
+    if not user.verify_password(old_password):
+        abort(401)
+
+    user.hash_password(new_password)
+    db.session.commit()
+    return jsonify({'message': 'Password changed successfully'}), 200
+```
+
+### 3. Модуль `investments` для управления инвестициями
+
+```python
+from flask import Blueprint, request, jsonify, abort
+from werkzeug.security import check_password_hash
+from models import Investment, User
+
+bp = Blueprint('investments', __name__)
+
+@bp.route('/portfolio', methods=['GET'])
+def get_portfolio():
+    current_user = request.headers.get('Authorization').split()[1]
+    user = User.query.filter_by(id=current_user).first()
+    if not user:
+        abort(404)
+
+    investments = user.investments
+    return jsonify([inv.to_dict() for inv in investments])
+
+@bp.route('/buy', methods=['POST'])
+def buy_stock():
+    current_user = request.headers.get('Authorization').split()[1]
+    user = User.query.filter_by(id=current_user).first()
+    if not user:
+        abort(404)
+
+    data = request.get_json()
+    if not data or not all([key in data for key in ['symbol', 'quantity']]):
+        abort(400)
+
+    symbol = data['symbol'].upper()
+    quantity = int(data['quantity'])
+
+    try:
+        stock = Stock.query.filter_by(symbol=symbol).first()
+    except Exception as e:
+        abort(404, f"Stock '{symbol}' not found")
+
+    total_cost = quantity * stock.price
+    remaining_balance = user.balance - total_cost
+
+    if remaining_balance < 0:
+        abort(400, "Not enough funds to complete the transaction")
+
+    investment = Investment(user_id=user.id, stock_id=stock.id, quantity=quantity)
+    user.balance
