@@ -2,11 +2,12 @@ import os
 import logging
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt
-import pwinput
-from langchain_community.chat_models import GigaChat
-from langchain_core.messages import HumanMessage, SystemMessage
+# import pwinput
+from rag import Rag
+from memory import Memory
 import time
+
+from langchain_community.chat_models import GigaChat
 from _config import credentials
 
 # === Настройка логирования ===
@@ -19,43 +20,8 @@ logging.basicConfig(
     ]
 )
 
-# === Настройка визуализации ===
-console = Console()
-
-# === Инициализация модели GigaChat (или другой выбранной модели) ===
-gigachat_model = GigaChat(
-    credentials=credentials,
-    verify_ssl_certs=False,
-    timeout=360,
-    temperature=0.2,
-    top_p=0.5,
-    model="GigaChat-Max",
-    max_tokens=10000000
-)
-
-# === Определение класса памяти ===
-class Memory:
-    def __init__(self):
-        self.data = {}
-     
-    def read(self, key):
-        return self.data.get(key, "")
-     
-    def append(self, key, value):
-        if key in self.data:
-            self.data[key] += f"\n{value}"
-        else:
-            self.data[key] = value
-     
-    def clear(self):
-        self.data = {}
-
-# Создаем общую память для агентов
-shared_memory = Memory()
-
-# === Определение базового агента ===
 class Agent:
-    def __init__(self, role_description, model, max_retries=3, name=None, memory=None):
+    def __init__(self, role_description, model, max_retries=10, name=None, memory=None):
         """
         Инициализация агента.
         :param role_description: Описание роли агента.
@@ -78,14 +44,12 @@ class Agent:
         :param memory_key_write: Ключ памяти, куда записывать результат.
         :return: Ответ от модели или None в случае ошибки.
         """
-        # Получаем содержимое памяти, если указан ключ
         memory_content = ""
         if self.memory and memory_key_read:
             mem = self.memory.read(memory_key_read)
             if mem:
                 memory_content = f"\nКонтекст из памяти [{memory_key_read}]:\n{mem}\n"
         
-        # Формируем промпт с описанием роли и контекстом
         prompt = f"{self.role_description}\n{memory_content}\n{input_text}"
         retries = 0
         while retries < self.max_retries:
@@ -93,32 +57,57 @@ class Agent:
                 console.print(Panel(f"[bold yellow]Промпт агента {self.name}:[/bold yellow]\n{prompt}", border_style="bright_blue"))
                 logging.info(f"Попытка #{retries + 1} отправки запроса для агента '{self.name}'")
                 response = self.model.invoke(prompt)
-                # Извлекаем ответ
+
                 if hasattr(response, "content"):
                     result = response.content.strip()
                 else:
                     result = response.strip()
                 logging.info(f"Ответ от модели для агента '{self.name}': {result}")
                 console.print(Panel(f"[bold green]Ответ {self.name}:[/bold green]\n{result}", border_style="bright_green"))
-                # Записываем результат в память, если указан ключ для записи
+
                 if self.memory and memory_key_write:
                     self.memory.append(memory_key_write, f"{self.name}:\n{result}")
                 return result
             except Exception as e:
                 logging.error(f"Ошибка при вызове модели для агента '{self.name}': {e}")
                 retries += 1
+                time.sleep(20)
                 if retries >= self.max_retries:
                     console.print(Panel(f"[bold red]Ошибка: {str(e)}[/bold red]", border_style="red"))
                     return None
 
-# === Определение агентов по ролям ===
+
+console = Console()
+
+shared_memory = Memory()
+rag = Rag()
+
+gigachat_model = GigaChat(
+    credentials=credentials,
+    verify_ssl_certs=False,
+    timeout=360,
+    temperature=0.2,
+    top_p=0.4,
+    model="GigaChat-Max",
+    max_tokens=10000000
+)
+
+# Экстрактор языка программирования 
+code_language = Agent(
+    role_description=(
+        ""
+    ),
+    model=gigachat_model,
+    memory=shared_memory,
+    name="Код программирования"
+)
 
 # 1. Анализатор требований
 req_analyzer = Agent(
     role_description=(
         "Задача: проанализировать текстовые требования на наличие логических ошибок, двусмысленных формулировок и противоречий. "
         "Выяви нечеткие определения, неопределённые числовые диапазоны, противоречивые условия, а также предложи рекомендации по их исправлению. "
-        "Вывод должен содержать краткий список обнаруженных проблем и рекомендации для корректировки требований."
+        "Вывод должен содержать список обнаруженных проблем и рекомендации для корректировки требований."
     ),
     model=gigachat_model,
     memory=shared_memory,
@@ -141,22 +130,51 @@ code_analyzer = Agent(
 # 3. Анализатор соответствия (сопоставление требований и кода)
 alignment_checker = Agent(
     role_description=(
-        "Задача: сопоставить текстовые требования и исходный код, выявить несоответствия между задокументированным функционалом и реализованными возможностями. "
-        "Обрати внимание на отсутствие функций, несоответствие числовых диапазонов, а также нарушения архитектурных требований. "
-        "Выведи отчет, где указаны: какие требования не реализованы, какие функции присутствуют в коде, но не описаны в требованиях, "
-        "а также дай рекомендации по исправлению обнаруженных несоответствий."
+        "Задача: Сопоставить текстовые требования и исходный код, выявить несоответствия между задокументированным функционалом и реализованными возможностями. "
+        "Важно: Если в требованиях описан функционал A, но в коде он отсутствует, это является несоответствием и должно быть указано. "
+        "Если в коде присутствует функционал, который не указан в требованиях, это не является ошибкой, так как требования могут быть неполными. "
+        "Обрати внимание на отсутствие задокументированных функций, несоответствие числовых диапазонов, а также нарушения архитектурных требований. "
+        "Выведи отчет, в котором указаны: требования, которые не реализованы в коде;"
+        "а также даны рекомендации по исправлению обнаруженных несоответствий."
     ),
     model=gigachat_model,
     memory=shared_memory,
     name="Анализатор соответствия"
 )
 
+# 4. Анализатор кодов TODO code filler
+coder = Agent(
+    role_description=(
+        "Ты умный помощник-программист, который должен генерировать надежный код на Python строго по заданным требованиям. При работе необходимо соблюдать следующие принципы и правила:\n"
+        "1. Анализ требований: Перед написанием кода внимательно проанализируй все документированные требования. Убедись, что полностью понял задачу, бизнес-логику и ожидаемый функционал.\n"
+        "2. Полнота функционала: Реализуй весь указанный функционал без упущений. Ничего не пропускай – каждая деталь требований должна быть отражена в решении.\n"
+        "3. Соответствие логике и ограничениям: Строго соблюдай бизнес-логику, математические формулы и все ограничения, указанные в требованиях. Решение должно точно соответствовать описанным правилам работы.\n",
+        "4. В ответе верни только код."
+    ),
+    model=gigachat_model,
+    memory=shared_memory,
+    name="Код реализации LLM"
+)
+
+two_code_analyzer = Agent(
+    role_description=(
+        "Твоя задача – проанализировать два кода: один предоставлен LLM в качестве справочного бейзлайна, другой – код пользователя. " 
+        "Проведи тщательное сравнение с акцентом на математическую корректность реализации: убедись, что диапазоны, знаки в неравенствах и логические условия в коде пользователя полностью совпадают с кодом LLM. " 
+        "Отличия в архитектуре, стиле или организации кода не являются ошибками и могут быть проигнорированы. " 
+        "В итоговом ответе необходимо сформировать список расхождений, обнаруженных в коде пользователя по сравнению с кодом LLM. " 
+        "Код LLM предоставлен исключительно для справки – его комментировать не нужно. Если математическая логика в коде пользователя идентична, выведи сообщение об отсутствии расхождений."
+    ),
+    model=gigachat_model,
+    memory=shared_memory,
+    name="Анализатор математической логики"
+)
+
 # 4. Генератор отчёта
 report_generator = Agent(
     role_description=(
-        "Задача: на основе проведенного анализа требований, кода и их соответствия сформировать итоговый краткий отчет, "
+        "Задача: на основе проведенного анализа требований, кода и их соответствия сформировать итоговый отчет, "
         "где перечислены все обнаруженные ошибки, несоответствия и рекомендации по их исправлению. "
-        "Если запрошен подробный отчет (режим детально), включи дополнительную информацию и подробности для каждого найденного пункта. "
+        "Включи дополнительную информацию и подробности для каждого найденного пункта. "
         "Вывод должен быть структурированным и понятным для разработчиков и аналитиков."
     ),
     model=gigachat_model,
@@ -199,7 +217,7 @@ quality_evaluator = Agent(
 # 6. Суммаризатор
 summarizer_agent = Agent(
     role_description=(
-        "Задача: на основе полного отчета, сформированного предыдущими агентами, выделить только самые серьезные недочеты и ошибки. "
+        "Задача: на основе полного отчета, сформированного предыдущими агентами, выделить только самые серьезные ошибки и недочеты. "
         "Сформируй суммаризованный отчет, который должен содержать три части, строго в следующей структуре:\n\n"
         "Ответ по требованиям:\n"
         "*Отчет по требованиям*\n\n"
@@ -218,7 +236,6 @@ summarizer_agent = Agent(
 )
 
 
-# === Основной рабочий процесс ===
 def main_workflow():
     """
     Основной рабочий процесс мультиагентной системы для анализа текстовых требований и исходного кода.
@@ -226,7 +243,7 @@ def main_workflow():
     console.print("[bold cyan]Добро пожаловать в систему анализа соответствия требований и кода![/bold cyan]", justify="center")
     
     # Чтение файла с текстовыми требованиями
-    requirements_file_path = '/Users/kpaq/Documents/code/products-ai-agent/tests/БТ2/БТ2.txt'  # Укажите корректный путь к файлу требований
+    requirements_file_path = '/Users/kpaq/Documents/code/products-ai-agent/tests/БТ5/БТ5.txt'  # Укажите корректный путь к файлу требований
     if not os.path.exists(requirements_file_path):
         console.print(f"[bold red]Файл с требованиями не найден: {requirements_file_path}[/bold red]")
         return
@@ -234,16 +251,20 @@ def main_workflow():
         project_requirements = file.read()
         
     # Чтение файла с исходным кодом
-    code_file_path = '/Users/kpaq/Documents/code/products-ai-agent/tests/БТ2/Код2.txt'  # Укажите корректный путь к файлу с кодом (или реализуйте обход нескольких файлов)
+    code_file_path = '/Users/kpaq/Documents/code/products-ai-agent/tests/БТ5/Код5.txt'  # Укажите корректный путь к файлу с кодом (или реализуйте обход нескольких файлов)
     if not os.path.exists(code_file_path):
         console.print(f"[bold red]Файл с кодом не найден: {code_file_path}[/bold red]")
         return
     with open(code_file_path, 'r', encoding='utf-8') as file:
         project_code = file.read()
+        
+    # Запрос в RAG
+    data_rag = rag.get_data(project_requirements)
     
     # Очистка общей памяти и загрузка исходных данных
     shared_memory.clear()
     shared_memory.append("Требования пользователя", project_requirements)
+    shared_memory.append("Требования пользователя RAG", f"{project_requirements}\n{data_rag}")
     shared_memory.append("Код пользователя", project_code)
     
     results = {}
@@ -251,19 +272,19 @@ def main_workflow():
     # 1. Анализ требований
     req_analysis = req_analyzer.run(
         input_text="Проанализируй представленные требования на предмет логических ошибок, двусмысленностей и противоречий.",
-        memory_key_read="Требования пользователя",
+        memory_key_read="Требования пользователя RAG",
         memory_key_write="Анализ требований"
     )
     results["Анализ требований"] = req_analysis
-    time.sleep(5)
+
     # 2. Анализ кода
-    code_analysis = code_analyzer.run(
-        input_text="Проанализируй исходный код на наличие логических и функциональных ошибок, а также несоответствий архитектурным требованиям.",
-        memory_key_read="Код пользователя",
-        memory_key_write="Анализ кода"
-    )
-    results["Анализ кода"] = code_analysis
-    time.sleep(5)
+    # code_analysis = code_analyzer.run(
+    #     input_text="Проанализируй исходный код на наличие логических и функциональных ошибок, а также несоответствий архитектурным требованиям.",
+    #     memory_key_read="Код пользователя",
+    #     memory_key_write="Анализ кода"
+    # )
+    # results["Анализ кода"] = code_analysis
+
     # 3. Сопоставление требований и кода
     # Объединяем исходные требования и код для сравнения
     combined_input = f"Требования:\n{project_requirements}\n\nКод:\n{project_code}"
@@ -274,15 +295,31 @@ def main_workflow():
         memory_key_write="Анализ соответствия"
     )
     results["Анализ соответствия"] = alignment_analysis
-    time.sleep(5)
-    # 4. Генерация итогового отчёта
-    combined_analysis = (
-        f"Результаты анализа требований:\n{req_analysis}\n\n"
-        f"Результаты анализа кода:\n{code_analysis}\n\n"
-        f"Результаты сопоставления:\n{alignment_analysis}"
+
+    # 4. Анализатор кодов
+    llm_code = coder.run(
+        input_text="",
+        memory_key_read="Требования пользователя",
+        memory_key_write="Код LLM"
     )
+    results["Код LLM"] = llm_code
+    
+    combined_code = f"Код пользователя:\n{project_code}\n\nКод LLM:\n{llm_code}"
+    shared_memory.append("Коды", combined_code)
+    two_code_analysis = two_code_analyzer.run(
+        input_text="Сравни код пользователя и LLM-код по математической корректности и выведи список расхождений или сообщение об их отсутствии, игнорируя стиль и архитектуру.",
+        memory_key_read="Коды",
+        memory_key_write="Анализ кодов"
+    )
+    results["Анализ кодов"] = two_code_analysis
+
+    # 4. Генерация итогового отчёта
+    combined_analysis = f"""Результаты анализа требований:\n{req_analysis}\n
+Результаты сопоставления:\n{alignment_analysis}\n
+Результаты математической корректности:\n{two_code_analysis}\n"""# Результаты анализа кода:\n{code_analysis}\n
+
     shared_memory.append("Информация по проекту", combined_analysis)
-    time.sleep(5)
+
     # Генерация подробного отчёта
     detail_flag = "Режим: подробный отчет. Включи все подробности по каждому обнаруженному пункту."
     final_report = report_generator.run(
@@ -290,7 +327,7 @@ def main_workflow():
         memory_key_read="Информация по проекту",
         memory_key_write="Отчет"
     )
-    time.sleep(5)
+ 
     # 5. Оценка качества требований и кода
     shared_memory.append("Оценка данных", final_report)
     quality_evaluation = quality_evaluator.run(
@@ -299,11 +336,11 @@ def main_workflow():
         memory_key_write="Оценка качества"
     )
     results["Оценка качества"] = quality_evaluation
-    time.sleep(5)
+
     # Добавление оценки качества в конец финального отчёта
     final_report += f"\n\nОценка качества требований и кода:\n{quality_evaluation}"
     results["Итоговый отчет"] = final_report
-    time.sleep(5)
+
     # 6. Суммаризация – выделение самых серьезных недочетов и ошибок
     shared_memory.append("Полный отчет", final_report)
     summarized_report = summarizer_agent.run(
