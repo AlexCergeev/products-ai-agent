@@ -1,8 +1,9 @@
+import os
 from langchain_core.documents import Document
 from langchain.vectorstores import Qdrant
 from langchain_gigachat.embeddings import GigaChatEmbeddings
 
-from _config import credentials
+credentials = os.environ.get("GIGACHAT_API_KEY")
 
 texts = ['Техническое задание может содержать нечетко сформулированные требования, что приводит к неоднозначному пониманию задачи.',
  'В документе могут присутствовать противоречивые указания, из-за чего разные части задания конфликтуют между собой.',

@@ -52,14 +52,12 @@ git clone https://github.com/AlexCergeev/products-ai-agent.git
 
 ## Добавление credentials
 
-Для работы необходимо добавить API-ключи в файл `_config.py`. Создайте этот файл в корневой директории проекта и добавьте в него следующую строку:
+Для работы необходимо добавить API-ключи в переменные окружения:
 
 ```python
-# GIGACHAT_API_KEY 
-credentials = "your_api_key_here"
-
-login = "confluence_login"
-password = "confluence_password"
+os.environ["GIGACHAT_API_KEY"] = "GIGACHAT_API_KEY"
+os.environ["confluence_login"] = "confluence_login"
+os.environ["confluence_password"]= "confluence_password"
 ```
 
 ## Запуск проекта

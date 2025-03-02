@@ -13,7 +13,10 @@ from langchain.agents import initialize_agent
 from langchain.agents import AgentType
 from jira import JIRA 
 from bs4 import BeautifulSoup as soup
-from _config import credentials, login, password
+
+credentials = os.environ.get("GIGACHAT_API_KEY")
+login = os.environ.get("confluence_login")
+password= os.environ.get("confluence_password")
 
 import warnings
 
