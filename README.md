@@ -11,6 +11,7 @@ AI-агент, разработанный для снижения количес
 Проект может быть запущен:
 
 1. В Colab (самый простой подход, можно запустить одной кнопкой).
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AlexCergeev/products-ai-agent/blob/main/example_agent_colab.ipynb)
 
 2. На личном устройстве.
 
