@@ -58,14 +58,8 @@ git clone https://github.com/AlexCergeev/products-ai-agent.git
 # GIGACHAT_API_KEY 
 credentials = "your_api_key_here"
 
-confluence_base_url = "confluence_base_url"
-jira_base_url = "jira_base_url"
-
-confluence_login = "login"
-confluence_password = "password"
-
-jira_login = "login"
-jira_password = "password"
+login = "confluence_login"
+password = "confluence_password"
 ```
 
 ## Запуск проекта
@@ -73,7 +67,7 @@ jira_password = "password"
 После установки зависимостей и добавления API-ключа вы можете запустить проект. Например:
 
 ```bash
-python main.py
+python agent.py
 ```
 
 Агент запросит ссылки на Техническое задание и код проекта (также можно передать требования и код в файлах — их необходимо добавить в корневую директорию и указать их названия).
