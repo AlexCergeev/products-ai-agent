@@ -1,0 +1,42 @@
+package main
+
+import (
+  "fmt"
+  "math"
+)
+
+// calculateMaxLoanDuration вычисляет максимальный срок кредита
+func calculateMaxLoanDuration(clientAge int, maxAgeAtMaturity int, maxProductTerm int, incomeLimit float64, monthlyPayment float64, monthlyIncome float64) int {
+  // Расчет срока на основе возраста
+  ageBasedTerm := maxAgeAtMaturity - clientAge
+
+  // Расчет срока на основе дохода
+  incomeBasedTerm := int(math.Floor(incomeLimit * monthlyIncome / monthlyPayment))
+
+  // Возвращаем минимальное значение из всех ограничений
+  return min(ageBasedTerm, maxProductTerm, incomeBasedTerm)
+}
+
+func min(values ...int) int {
+  minValue := values[0]
+  for _, v := range values {
+    if v < minValue {
+      minValue = v
+    }
+  }
+  return minValue
+}
+
+func main() {
+  // Пример данных клиента
+  clientAge := 35
+  maxAgeAtMaturity := 70
+  maxProductTerm := 30
+  incomeLimit := 0.4 // 40% от дохода
+  monthlyPayment := 50000.0
+  monthlyIncome := 150000.0
+
+  // Расчет максимального срока кредита
+  maxDuration := calculateMaxLoanDuration(clientAge, maxAgeAtMaturity, maxProductTerm, incomeLimit, monthlyPayment, monthlyIncome)
+  fmt.Printf("Максимальный срок кредита: %d лет\n", maxDuration)
+}
