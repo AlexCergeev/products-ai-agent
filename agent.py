@@ -13,10 +13,13 @@ from langchain.agents import initialize_agent
 from langchain.agents import AgentType
 from jira import JIRA 
 from bs4 import BeautifulSoup as soup
+from urllib.parse import urlparse
 
 credentials = os.environ.get("GIGACHAT_API_KEY")
 login = os.environ.get("confluence_login")
 password= os.environ.get("confluence_password")
+login_jira = os.environ.get("jira_login")
+token_jira= os.environ.get("jira_password")
 
 import warnings
 
@@ -31,7 +34,6 @@ logging.basicConfig(
         # logging.StreamHandler()
     ]
 )
-
 
 # === Инициализация модели GigaChat 
 gigachat_model = GigaChat(
@@ -133,7 +135,8 @@ class Main_Workflow:
         self.project_requirements = project_requirements
         self.project_code = project_code
         self.gigachat_model = gigachat_model
-
+        
+        
     def extract_id(self, url):
         """
         Извлекает page_id из ссылки на Confluence
@@ -143,38 +146,39 @@ class Main_Workflow:
         """
         match = re.search(r'/pages/(\d+)', url)
         return match.group(1) if match else None
+    
      
     @staticmethod 
     @tool
-    def create_jira_task(summary, description, PAGE_ID, project_key="Test", issue_type="Task"):
+    def create_jira_task(link, summary, description):
         """
-        Создает задачу в Jira и возвращает её ключ.
+        Создает задачу в Jira по ссылке link c заголовком summary и описанием description и возвращает её ключ.
 
         summary: заголовок задачи str
-        description: опитсание задачи str
+        description: описание задачи str
         return: ключ задачи Jira
         """
-        host = "<JIRA_BASE_URL>"
-        pat = "<YOUR-PERSONAL-ACCESS-TOKEN>"
-        # Create a Jira connection using the JIRA library
-        headers = JIRA.DEFAULT_OPTIONS["headers"].copy()
-        headers["Authorization"] = f"Bearer {pat}"
-        jira = JIRA(server=host, options={"headers": headers})
+        match = re.search(r'/projects/([A-Z0-9]+)', link)
+        project_key = match.group(1)
+        server_name = urlparse(link).netloc
+        jira_options = {'server': f'https://{server_name}'}
+        jira = JIRA(options=jira_options, basic_auth=(login_jira, token_jira))
+        
         new_issue = jira.create_issue(
-            project=project_key,
-            summary=summary,
-            description=description,
-            issuetype={"name": issue_type})
+                    project=project_key,
+                    summary=summary,
+                    description=description,
+                    issuetype={"name": 'Task'})
         return f"Задача создана {new_issue.key}"
     
     @staticmethod
     @tool
-    def create_confluence_comment(PAGE_ID, comment):
+    def create_confluence_comment(link, comment):
         """
-        Создает комментарий (comment) в Confluence по (PAGE_ID).
+        Создает комментарий (comment) в Confluence по ссылке (link).
 
         Args:
-        PAGE_ID: PAGE_ID на confluence str
+        link: ссылка на confluence str
         comment: комментарий для публикации на confluence str
         """
         # URL для создания комментария
@@ -183,7 +187,9 @@ class Main_Workflow:
         headers = {
             "Content-Type": "application/json"
         }
-
+        
+        match = re.search(r'/pages/(\d+)', link)
+        PAGE_ID = match.group(1)
         # Тело запроса
         data = {
             "type": "comment",
@@ -198,9 +204,7 @@ class Main_Workflow:
                 }
             }
         }
-        auth = HTTPBasicAuth(login, 
-                             password) 
-
+        auth = HTTPBasicAuth(login, password) 
         # Отправка запроса
         response = requests.post(url, auth=auth, headers=headers, json=data)
 
@@ -220,8 +224,7 @@ class Main_Workflow:
                 link = input('Введите ссылку на требования:') 
                 PAGE_ID = self.extract_id(link)
                 base_url = f"https://kpaqkpaq.atlassian.net/wiki/rest/api/content/{PAGE_ID}?expand=body.storage"
-                auth = HTTPBasicAuth(login, 
-                                     password)
+                auth = HTTPBasicAuth(login, password) 
                 if PAGE_ID is not None:
                     response = requests.get(base_url, auth=auth)
                     if response.status_code == 200:
@@ -312,6 +315,25 @@ class Main_Workflow:
             ),
             memory=shared_memory,
             name="Проверка сообщения"
+        )
+        
+         # Выделяет сущность, хочет ли пользователь загрузить данные
+        anwer_tool_checker = Agent(
+            role_description=(
+                """Ты отлично выделяешь хочет ли пользователь что-то использовать или нет. 
+                Задача: Если в ответе пользователя есть что-то похожее на желание использовать готовый инструмен, то верни в ответе только одно слово - 'да'. Если желания использовать нет, то верни в ответе - "нет". 
+                """
+            ),
+            model=GigaChat(
+                credentials=credentials,
+                verify_ssl_certs=False,
+                timeout=360,
+                temperature=0.1,
+                top_p=0.1,
+                model="GigaChat-Max"
+            ),
+            memory=shared_memory,
+            name="Проверка желания"
         )
 
         # Проверяет, что пользователь передал именно Бизнес требование
@@ -619,19 +641,46 @@ class Main_Workflow:
             memory_key_write="Суммаризованный отчет"
         )
         results["Суммаризованный отчет"] = summarized_report
+        # Спрашиваем пользователя, что он хочет сделать
+        answer_conf = input('Хотите ли Вы загрузить данные на конфлюенс?')
+        answer_agent = anwer_tool_checker.run(input_text=f"n\Ответ от пользователя {answer_conf}")
+        if answer_agent.lower() == 'да':
+            while True:
+                try:
+                    promt = input("Напишите свой запрос агенту. Не забудьте указать ссылку на Confluence:")
+                    promt = promt + f' c комментарием: \n\n {results["Суммаризованный отчет"]}'
+                    agent_jira_confluence.run(promt)
+                    break  # Если ошибок нет, выходим из цикла
+                except Exception as e:
+                    print(f"Ошибка: {e.__class__.__name__} - {e}. Попробуйте снова.")
+        else:
+            # Сохраняем краткий отчет в файл            
+            with open("Суммаризованный_отчет.txt", "w", encoding='utf-8') as output:
+                output.write(results["Суммаризованный отчет"])
 
-        promt = input('Вставьте ссылку на confluence, куда отправить отчет:')
-        PAGE_ID = self.extract_id(promt)
-        flag = True
-        while flag:
-            if PAGE_ID is not None:
-                response_confluence = agent_jira_confluence.run(f'Отправь в confluence по PAGE_ID "{PAGE_ID}" комментарий:\n\n "{results["Суммаризованный отчет"]}"')
-                print(response_confluence)
-                flag = False
-            else:
-                print('В предоставленной ссылке нет pageId.')
-                promt = input('Вставьте корректную ссылку на confluence, куда отправить отчет:')
-                PAGE_ID = self.extract_id(promt)
+            # Сохраняем полный отчет в файл      
+            with open("Итоговый_отчет.txt", "w", encoding='utf-8') as output:
+                output.write(results["Итоговый отчет"])
+
+        # Спрашиваем пользователя,что он хочет сделать
+        answer_jira = input('Хотите ли Вы создать задачу в Jira на доработку?')
+        answer_agent = anwer_tool_checker.run(input_text=f"n\Ответ от пользователя {answer_jira}")
+        if answer_agent.lower() == 'да':
+            while True:
+                try:
+                    promt = input("Напишите свой запрос агенту. Не забудьте указать ссылку на Jira, заголовок и описание задачи:")
+                    agent_jira_confluence.run(promt)
+                    break  # Если ошибок нет, выходим из цикла
+                except Exception as e:
+                    print(f"Ошибка: {e.__class__.__name__} - {e}. Попробуйте снова.")
+        else:
+            # Сохраняем краткий отчет в файл            
+            with open("Суммаризованный_отчет.txt", "w", encoding='utf-8') as output:
+                output.write(results["Суммаризованный отчет"])
+
+            # Сохраняем полный отчет в файл      
+            with open("Итоговый_отчет.txt", "w", encoding='utf-8') as output:
+                output.write(results["Итоговый отчет"])
         
         # Сохраняем краткий отчет в файл            
         with open("Суммаризованный_отчет.txt", "w", encoding='utf-8') as output:
@@ -640,11 +689,6 @@ class Main_Workflow:
         # Сохраняем полный отчет в файл      
         with open("Итоговый_отчет.txt", "w", encoding='utf-8') as output:
             output.write(results["Итоговый отчет"])
-        
+                
         print('Краткий и полный отчет сохранены в файл!')
-        
         return
-    
-if __name__ == "__main__":
-    multi_agents = Main_Workflow()
-    multi_agents.work()

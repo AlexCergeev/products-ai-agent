@@ -2,6 +2,7 @@ import os
 from langchain_core.documents import Document
 from langchain.vectorstores import Qdrant
 from langchain_gigachat.embeddings import GigaChatEmbeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 credentials = os.environ.get("GIGACHAT_API_KEY")
 
@@ -119,24 +120,42 @@ big_texts = [
 "Неподходящие инструменты отслеживания – Управление требованиями ведется неформально (в электронных письмах, таблицах, устных обсуждениях), отсутствует централизованный инструмент, что затрудняет отслеживание изменений и актуальной версии – Решение: внедрить систему управления требованиями или хотя бы централизованный реестр (например, Confluence, Jira, специализированное ПО) с возможностью версионирования и ведения истории изменений, чтобы все участники имели доступ к актуальным требованиям."
 ]
 
-docs = [Document(page_content=text) for text in big_texts]
+docs = [Document(page_content=text) for text in texts]
 
 
 class Rag:
-    def __init__(self, top_k=3):
-        self.embeddings = GigaChatEmbeddings(one_by_one_mode=True,
-                                             credentials=credentials, 
-                                             verify_ssl_certs=False)
+    def __init__(self, top_k=3, chunk_size=512, chunk_overlap=50):
+        self.embeddings = GigaChatEmbeddings(
+            one_by_one_mode=True,
+            credentials=credentials, 
+            verify_ssl_certs=False
+        )
+        
         self.doc_store = Qdrant.from_documents(
             docs,
             self.embeddings,
             location=":memory:",
             collection_name="docs",
         )
+        
         self.rag = self.doc_store.as_retriever(search_kwargs={'k': top_k})
 
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap
+        )
+
     def get_data(self, text) -> str:
-        response = self.rag.invoke(text)
+        chunks = self.text_splitter.split_text(text)
+
+        responses = []
+        for chunk in chunks:
+            response = self.rag.invoke(chunk)
+            responses.extend(response)
+
+        if not responses:
+            return "Не удалось получить данные из RAG."
+
         promt = "\nДанные для справки, они получены из RAG:\n\n"
-        data = '\n\n'.join([i.page_content for i in response])
+        data = '\n\n'.join([i.page_content for i in responses])
         return promt + data + '\n\n'

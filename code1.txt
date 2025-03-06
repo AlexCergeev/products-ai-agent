@@ -1,42 +1,40 @@
 package main
-
 import (
-  "fmt"
-  "math"
+	"net/http"
+	"github.com/gin-gonic/gin"
 )
-
-// calculateMaxLoanDuration вычисляет максимальный срок кредита
-func calculateMaxLoanDuration(clientAge int, maxAgeAtMaturity int, maxProductTerm int, incomeLimit float64, monthlyPayment float64, monthlyIncome float64) int {
-  // Расчет срока на основе возраста
-  ageBasedTerm := maxAgeAtMaturity - clientAge
-
-  // Расчет срока на основе дохода
-  incomeBasedTerm := int(math.Floor(incomeLimit * monthlyIncome / monthlyPayment))
-
-  // Возвращаем минимальное значение из всех ограничений
-  return min(ageBasedTerm, maxProductTerm, incomeBasedTerm)
+type PremiumCardRequest struct {
+	Age         int     `json:"age"`
+	Income      float64 `json:"income"`
+	Profession  string  `json:"profession"`
+	HasDelays   bool    `json:"has_delays"`
 }
-
-func min(values ...int) int {
-  minValue := values[0]
-  for _, v := range values {
-    if v < minValue {
-      minValue = v
-    }
-  }
-  return minValue
-}
-
 func main() {
-  // Пример данных клиента
-  clientAge := 35
-  maxAgeAtMaturity := 70
-  maxProductTerm := 30
-  incomeLimit := 0.4 // 40% от дохода
-  monthlyPayment := 50000.0
-  monthlyIncome := 150000.0
-
-  // Расчет максимального срока кредита
-  maxDuration := calculateMaxLoanDuration(clientAge, maxAgeAtMaturity, maxProductTerm, incomeLimit, monthlyPayment, monthlyIncome)
-  fmt.Printf("Максимальный срок кредита: %d лет\n", maxDuration)
+	r := gin.Default()
+	r.POST("/check_premium", func(c *gin.Context) {
+		var req PremiumCardRequest
+		if err := c.BindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+			return
+		}
+		if req.Age < 20 { 
+			c.JSON(http.StatusOK, gin.H{"approved": false, "reason": "age < 20"})
+			return
+		}
+		maxAge := 60
+		if req.HasDelays {
+			maxAge = 55
+		}
+		if req.Age > maxAge {
+			c.JSON(http.StatusOK, gin.H{"approved": false, "reason": "max age exceeded"})
+			return
+		}
+		if req.Income < 150000 {
+			c.JSON(http.StatusOK, gin.H{"approved": false, "reason": "income too low"})
+			return
+		}
+		limit := (req.Income * 0.3) * (1 + (float64(req.Age) - 20) / 100)
+		c.JSON(http.StatusOK, gin.H{"approved": true, "limit": limit})
+	})
+	r.Run(":8080")
 }
